@@ -5,13 +5,14 @@ import pygame
 import time
 import sys
 import io
-import cairosvg
-
+import os
+from AIs.random import ai_random
+from button import Button
 
 width = 1280
 height = 720
-board_starting_pos = [0,0]
-board_size = 600
+board_starting_pos = [0, 0]
+board_size = 390
 board = chess.Board()
 symbol_size = int(45/390 * board_size)
 selected_square = None
@@ -24,24 +25,36 @@ mouse_pos = [0, 0]
 is_moving_brick = False
 start_mouse_pos = mouse_pos
 offset = [0, 0]
+opponent = 0
 
 symbol = {
     a: pygame.image.load(io.BytesIO(str(
             chess.svg.piece(chess.Piece.from_symbol(a), size=symbol_size)).encode('utf-8'))) for a in ["R", "N", "B", "Q", "K", "P", "r", "n", "b", "q", "k", "p"]
 }
-
-board_image = pygame.image.load(io.BytesIO(cairosvg.svg2png(bytestring=bytes(
-    chess.svg.board(board=None, size=board_size), "utf8"))), "png")
-
-
-border = [(board_image.get_size()[i] - 8 * symbol_size) // 2 for i in range(2)]
 positions = {}
+board_image = pygame.image.load(io.BytesIO(str(
+        chess.svg.board(board=None, size=board_size)).encode('utf-8')))
+
+border = [(board_size - 8 * symbol_size) // 2 for i in range(2)]
+buttons = []
+screen = pygame.display.set_mode((width, height))
+
+
+def setup():
+    global buttons
+    pygame.init()
+    pygame.display.set_caption("Chess")
+    buttons.append(Button(board_starting_pos[0]+board_size+50, 100, 100, 50, "#a6a6a6", "Spiller", False, 0))
+    buttons.append(Button(board_starting_pos[0]+board_size+50, 200, 100, 50, "#a6a6a6", "Random", True, 1))
+    update_board(False)
 
 
 def draw_board(special_drawing, square, pos):
     screen.fill((200, 200, 200))
     screen.blit(board_image, board_starting_pos)
     draw_bricks(special_drawing, square, pos)
+    for a in buttons:
+        a.show(screen)
     pygame.display.update()
 
 
@@ -64,8 +77,6 @@ def draw_bricks(special_drawing, square, pos):
             positions[c].append(pos)
         elif c in symbol and c == special_drawing:
             screen.blit(symbol[c], (pos[0], pos[1]))
-
-
         if c in symbol or c == '.':
             x += 1
 
@@ -110,6 +121,7 @@ def select_square(pos):
         board.push(move)
         click_turn = 0
         update_board(False)
+        find_opponent()
     else:
         click_turn = 0
         selected_square = None
@@ -132,22 +144,36 @@ def update_board(is_move):
         'lastmove': prev_moves[-1] if len(prev_moves) > 0 else None,
         'fill': square_colours,
     }
-    if board.is_check():
-        variables['check'] = positions["K" if board.turn else "k"][0]
-    board_image = pygame.image.load(io.BytesIO(cairosvg.svg2png(bytestring=bytes(chess.svg.board(**variables), "utf8"))), "png")
+    board_image = pygame.image.load(io.BytesIO(str(
+        chess.svg.board(**variables)).encode('utf-8')))
     draw_board(None, None, None)
+
 
 def move_piece():
     ...
 
 
-pygame.init()
-screen = pygame.display.set_mode((width, height))
-pygame.display.set_caption("Chess")
-# Font til tekst i vinduet
-font = pygame.font.SysFont("Arial", 36)
-update_board(False)
+def is_pressing_button(pos):
+    global opponent
+    for i in buttons:
+        if i.x <= pos[0] <= i.x + i.width and i.y <= pos[1] <= i.y + i.height:
+            opponent = i.is_pressed()
+            print(opponent)
+            return True
 
+
+def find_opponent():
+    if opponent == 1:
+        move_uci = ai_random(list(board.legal_moves))
+        print(move_uci, "1")
+        move = chess.Move.from_uci(f"{move_uci}")
+        print(move)
+        prev_moves.append(move)
+        board.push(move)
+        update_board(False)
+
+
+setup()
 
 running = True
 while running:
@@ -164,6 +190,8 @@ while running:
                 start_mouse_pos = mouse_pos
                 is_moving_brick = True
                 select_square(mouse_pos)
+            else:
+                is_pressing_button(mouse_pos)
         elif event.type == pygame.MOUSEBUTTONUP:
             is_moving_brick = False
             mouse_pos_old = mouse_pos
@@ -176,6 +204,5 @@ while running:
 
 if __name__ == "__main__":
     pass
-
 
 pygame.quit()
