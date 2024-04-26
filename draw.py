@@ -38,6 +38,8 @@ board_image = pygame.image.load(io.BytesIO(str(
 border = [(board_size - 8 * symbol_size) // 2 for i in range(2)]
 buttons = []
 screen = pygame.display.set_mode((width, height))
+is_pawn_promotion = False
+pawn_promote_square = None
 
 
 def setup():
@@ -49,20 +51,23 @@ def setup():
     update_board(False)
 
 
-def draw_board(special_drawing, square, pos):
+def draw_board(special_drawing, square, piece_pos):
     screen.fill((200, 200, 200))
     screen.blit(board_image, board_starting_pos)
-    draw_bricks(special_drawing, square, pos)
+    draw_bricks(special_drawing, square, piece_pos)
     for a in buttons:
         a.show(screen)
+    if is_pawn_promotion:
+        draw_pawn_promotion()
     pygame.display.update()
 
 
-def draw_bricks(special_drawing, square, pos):
+def draw_bricks(special_drawing, square, piece_pos):
     global positions
     positions = {"R": [], "N": [], "B": [], "Q": [], "K": [], "P": [], "r": [], "n": [], "b": [], "q": [], "k": [], "p": []}
     x, y = 0, 0
     file, rank = -10, -10
+    draw_square = chess.square(x, y)
     for c in str(board):
         if c == '\n':
             y += 1
@@ -70,15 +75,32 @@ def draw_bricks(special_drawing, square, pos):
         elif c == special_drawing:
             file = chess.square_file(square)
             rank = 7 - chess.square_rank(square)
-        if c in symbol and x != file and y != rank:
+        draw_square = chess.square(x, 7 - y)
+        if c in symbol and square != draw_square:
             screen.blit(symbol[c], (symbol_size * x + border[0],
                                     symbol_size * y + border[1]))
-            pos = chess.square(x, 7-y)
-            positions[c].append(pos)
+            positions[c].append(draw_square)
         elif c in symbol and c == special_drawing:
-            screen.blit(symbol[c], (pos[0], pos[1]))
+            screen.blit(symbol[c], piece_pos)
         if c in symbol or c == '.':
             x += 1
+
+
+def draw_pawn_promotion():
+    global is_pawn_promotion
+    rect = pygame.Rect(board_starting_pos, [board_size, board_size])
+    translucent_surface = pygame.Surface((board_size, board_size), pygame.SRCALPHA)
+    pygame.draw.rect(translucent_surface, (0, 0, 0, 170), rect)
+    screen.blit(translucent_surface, board_starting_pos)
+    center_coordinates = get_coordinates(pawn_promote_square)
+    starting_position = pygame.Rect(center_coordinates, [board_size, board_size])
+    way = 1 if board.turn else -1
+    drawings = ["q", "n", "r", "b"]
+    for i in range(4):
+        pygame.draw.circle(screen, "Grey", (starting_position.x + symbol_size/2, starting_position.y + (i * symbol_size * way) + symbol_size/2), symbol_size/2.1)
+        drawing_type = drawings[i].upper() if way == 1 else drawings[i]
+        drawing = pygame.transform.scale_by(symbol[drawing_type], 0.9)
+        screen.blit(drawing, (starting_position.x + symbol_size*0.05, starting_position.y + (i*symbol_size*way)+symbol_size*0.05))
 
 
 def find_legal_moves(square):
@@ -100,22 +122,30 @@ def find_square(x, y):
     file = relative_x // symbol_size
     rank = 7 - (relative_y // symbol_size)
     if offset == [0, 0]:
-        offset = [file * symbol_size + border[0] - relative_x, (7 - rank) * symbol_size + border[1] - relative_y]
+        offset = [0.5*symbol_size - (relative_x - file * symbol_size + border[0]), 0.5 * symbol_size - (relative_y - (7 - rank) * symbol_size + border[1])]
     return chess.square(file, rank)
 
 
 def select_square(pos):
-    global selected_square, selected_piece, click_turn
+    global selected_square, selected_piece, click_turn, offset, is_moving_brick, is_pawn_promotion, moves_for_square, pawn_promote_square
     prev_square = selected_square
     selected_square = int(find_square(pos[0], pos[1]))
     piece = str(board.piece_at(selected_square))
-
-    if (piece == piece.upper()) == board.turn and piece != "None" and prev_square != selected_square:
+    if (piece == piece.upper()) == board.turn and piece != "None" and prev_square != selected_square and not is_moving_brick:
         selected_piece = selected_square
         find_legal_moves(selected_square)
         update_board(True)
         click_turn = 1 if len(moves_for_square) > 0 else 0
+        is_moving_brick = True
     elif click_turn == 1 and selected_square in moves_for_square:
+        rank = chess.square_rank(selected_square)
+        piece_moved = str(board.piece_at(selected_piece))
+        if piece_moved.upper() == "P" and rank in [0, 7]:
+            is_pawn_promotion = True
+            moves_for_square = [selected_square]
+            pawn_promote_square = selected_square
+            update_board(True)
+            return
         move = chess.Move(from_square=selected_piece, to_square=selected_square)
         prev_moves.append(move)
         board.push(move)
@@ -150,7 +180,11 @@ def update_board(is_move):
 
 
 def move_piece():
-    ...
+    mouse_pos = pygame.mouse.get_pos()
+    if not start_mouse_pos[0] - 5 <= mouse_pos[0] <= start_mouse_pos[0] + 5 or not start_mouse_pos[1] - 5 <= mouse_pos[1] <= start_mouse_pos[1] + 5:
+        moved_piece = str(board.piece_at(selected_piece))
+        draw_position = [mouse_pos[0] + offset[0], mouse_pos[1] + offset[1]]
+        draw_board(moved_piece, selected_piece, draw_position)
 
 
 def is_pressing_button(pos):
@@ -158,16 +192,13 @@ def is_pressing_button(pos):
     for i in buttons:
         if i.x <= pos[0] <= i.x + i.width and i.y <= pos[1] <= i.y + i.height:
             opponent = i.is_pressed()
-            print(opponent)
             return True
 
 
 def find_opponent():
     if opponent == 1:
         move_uci = ai_random(list(board.legal_moves))
-        print(move_uci, "1")
         move = chess.Move.from_uci(f"{move_uci}")
-        print(move)
         prev_moves.append(move)
         board.push(move)
         update_board(False)
@@ -182,25 +213,30 @@ while running:
     for event in pygame.event.get():
         if is_moving_brick:
             move_piece()
+        elif is_pawn_promotion:
+            ...
         if event.type == pygame.QUIT:
             running = False
-        elif event.type == pygame.MOUSEBUTTONDOWN:
+        elif event.type == pygame.MOUSEBUTTONDOWN and not is_pawn_promotion:
             mouse_pos = pygame.mouse.get_pos()
             if border[0] <= mouse_pos[0] <= board_size - border[0] and border[1] <= mouse_pos[1] <= board_size - border[1]:
                 start_mouse_pos = mouse_pos
-                is_moving_brick = True
                 select_square(mouse_pos)
             else:
                 is_pressing_button(mouse_pos)
-        elif event.type == pygame.MOUSEBUTTONUP:
-            is_moving_brick = False
+        elif event.type == pygame.MOUSEBUTTONUP and not is_pawn_promotion:
+            offset = [0, 0]
             mouse_pos_old = mouse_pos
             mouse_pos = pygame.mouse.get_pos()
-            if (border[0] <= mouse_pos[0] <= board_size - border[0] and border[1] <= mouse_pos[1] <= board_size - border[1] and not
-                    (mouse_pos_old[0]-5 <= mouse_pos[0] <= mouse_pos_old[0]+5) and not
-                    (mouse_pos_old[1]-5 <= mouse_pos[1] <= mouse_pos_old[1]+5)):
+            if (border[0] <= mouse_pos[0] <= board_size - border[0] and
+                    border[1] <= mouse_pos[1] <= board_size - border[1] and not
+                    ((mouse_pos_old[0]-5 <= mouse_pos[0] <= mouse_pos_old[0]+5) and
+                     (mouse_pos_old[1]-5 <= mouse_pos[0] <= mouse_pos_old[1]+5))):
                 select_square(mouse_pos)
                 mouse_pos *= 100
+            is_moving_brick = False
+        elif event.type == pygame.MOUSEBUTTONUP and is_pawn_promotion:
+            ...
 
 if __name__ == "__main__":
     pass
